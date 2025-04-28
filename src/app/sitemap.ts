@@ -1,11 +1,9 @@
-// app/sitemap.xml/route.ts
-
 import dishApiRequest from '@/apiRequests/dish'
 import envConfig, { locales } from '@/config'
 import { generateSlugUrl } from '@/lib/utils'
-import type { MetadataRoute } from 'next'
+import { type MetadataRoute } from 'next'
 
-const staticRoutes = [
+const staticRoutes: MetadataRoute.Sitemap = [
   {
     url: '',
     changeFrequency: 'daily',
@@ -18,48 +16,61 @@ const staticRoutes = [
   }
 ]
 
-export async function GET() {
-  try {
-    const result = await dishApiRequest.list()
-    const dishList = result.payload.data
+// ❌ Không dùng export default sitemap nữa
+// ✅ Đổi thành export async function GET()
 
-    const urls = locales.flatMap((locale) => {
-      const staticUrls = staticRoutes.map((route) => `
-        <url>
-          <loc>${envConfig.NEXT_PUBLIC_URL}/${locale}${route.url}</loc>
-          <changefreq>${route.changeFrequency}</changefreq>
-          <priority>${route.priority}</priority>
-          <lastmod>${new Date().toISOString()}</lastmod>
-        </url>
-      `)
+export async function GET(): Promise<Response> {
+  const result = await dishApiRequest.list()
 
-      const dishUrls = dishList.map((dish) => `
-        <url>
-          <loc>${envConfig.NEXT_PUBLIC_URL}/${locale}/dishes/${generateSlugUrl({
-            id: dish.id,
-            name: dish.name
-          })}</loc>
-          <changefreq>weekly</changefreq>
-          <priority>0.9</priority>
-          <lastmod>${new Date(dish.updatedAt).toISOString()}</lastmod>
-        </url>
-      `)
+  const dishList = result.payload.data
 
-      return [...staticUrls, ...dishUrls]
-    })
+  const localizeStaticSiteMap = locales.reduce((acc, locale) => {
+    return [
+      ...acc,
+      ...staticRoutes.map((route) => ({
+        ...route,
+        url: `${envConfig.NEXT_PUBLIC_URL}/${locale}${route.url}`,
+        lastModified: new Date()
+      }))
+    ]
+  }, [] as MetadataRoute.Sitemap)
 
-    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-      <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-        ${urls.join('')}
-      </urlset>`
+  const localizeDishSiteMap = locales.reduce((acc, locale) => {
+    const dishListSiteMap: MetadataRoute.Sitemap = dishList.map((dish) => ({
+      url: `${envConfig.NEXT_PUBLIC_URL}/${locale}/dishes/${generateSlugUrl({
+        id: dish.id,
+        name: dish.name
+      })}`,
+      lastModified: dish.updatedAt,
+      changeFrequency: 'weekly',
+      priority: 0.9
+    }))
+    return [...acc, ...dishListSiteMap]
+  }, [] as MetadataRoute.Sitemap)
 
-    return new Response(sitemap, {
+  const fullSitemap = [...localizeStaticSiteMap, ...localizeDishSiteMap]
+
+  return new Response(
+    generateSitemapXml(fullSitemap),
+    {
       headers: {
         'Content-Type': 'application/xml'
       }
-    })
-  } catch (error) {
-    console.error('Failed to generate sitemap', error)
-    return new Response('Failed to generate sitemap', { status: 500 })
-  }
+    }
+  )
+}
+
+// ✅ Thêm hàm tự generate XML string
+function generateSitemapXml(routes: MetadataRoute.Sitemap): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${routes.map(route => `
+  <url>
+    <loc>${route.url}</loc>
+    ${route.lastModified ? `<lastmod>${new Date(route.lastModified).toISOString()}</lastmod>` : ''}
+    ${route.changeFrequency ? `<changefreq>${route.changeFrequency}</changefreq>` : ''}
+    ${route.priority ? `<priority>${route.priority}</priority>` : ''}
+  </url>
+`).join('')}
+</urlset>`
 }
